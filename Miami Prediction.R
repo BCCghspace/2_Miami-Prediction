@@ -62,3 +62,16 @@ qBr <- function(df, variable, rnd) {
 }
 
 q5 <- function(variable) {as.factor(ntile(variable, 5))}
+
+#read data (project to NAD 1983 StatePlane Florida East FIPS 0901 Feet)
+miamiBoundary <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/MiamiBoundary") %>%
+  st_transform('ESRI:102658')
+
+parks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/City_Parks.geojson") %>%
+  st_transform('ESRI:102658')
+
+studentsData <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson") %>%
+  st_transform('ESRI:102658')
+
+landmarks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Landmarks.geojson") %>%
+  st_transform('ESRI:102658')
