@@ -9,6 +9,8 @@ library(grid)
 library(gridExtra)
 library(ggcorrplot)
 library(stargazer)
+library(mapview)
+library(osmdata)
 
 mapTheme <- function(base_size = 12) {
   theme(
@@ -64,14 +66,39 @@ qBr <- function(df, variable, rnd) {
 q5 <- function(variable) {as.factor(ntile(variable, 5))}
 
 #read data (project to NAD 1983 StatePlane Florida East FIPS 0901 Feet)
-miamiBoundary <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/MiamiBoundary") %>%
-  st_transform('ESRI:102658')
+miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
+  filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
+  st_union()
 
-parks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/City_Parks.geojson") %>%
-  st_transform('ESRI:102658')
+  #OSM bounding box
+xmin = st_bbox(miamiBound)[[1]]
+ymin = st_bbox(miamiBound)[[2]]
+xmax = st_bbox(miamiBound)[[3]]  
+ymax = st_bbox(miamiBound)[[4]]
+
+greenSpace <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+  add_osm_feature(key = 'landuse', value = c("recreation_ground","village_green")) %>%
+  osmdata_sf()
+
+greenSpace <- 
+  greenSpace$osm_points %>%
+  .[miamiBound,]
+
+parks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/parks.geojson")
+ggplot() +
+  geom_sf(data=miamiBound, fill="black") +
+  geom_sf(data=parks, colour="green", size=.75) 
 
 studentsData <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson") %>%
   st_transform('ESRI:102658')
 
+  #schools, etc
 landmarks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Landmarks.geojson") %>%
   st_transform('ESRI:102658')
+
+  #crime - (vandalism could reduce home prices - broken windows theory)
+  
+  #water distance
+
+
+
