@@ -18,6 +18,7 @@ library(FNN)
 library(grid)
 library(gridExtra)
 library(ggcorrplot)
+library(mapview)
 
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
