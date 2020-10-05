@@ -368,17 +368,45 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
  train <-
    train %>% 
    mutate(
+     #commercial properties
      commNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
      commNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 3), 
      commNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 4), 
      commNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 5),
-
+     #green space
+     greenNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 1),
+     greenNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 2),
+     greenNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 3),
+     greenNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 4),
      greenNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 5),
-     
      #this could be improved - don't need Centroid
-     beachNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(beach)), 5),
-     ) 
+     beachNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(beach)), 1),
+     #metro mover stations
+     metroMNN1 = nn_function(st_c(st_centroid(train)), st_c(metromover), 1),
+     metroMNN2 = nn_function(st_c(st_centroid(train)), st_c(metromover), 2), 
+     metroMNN3 = nn_function(st_c(st_centroid(train)), st_c(metromover), 3), 
+     metroMNN4 = nn_function(st_c(st_centroid(train)), st_c(metromover), 4), 
+     metroMNN5 = nn_function(st_c(st_centroid(train)), st_c(metromover), 5),
+     #metro rail stations
+     metroRNN1 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 1),
+     metroRNN2 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 2), 
+     metroRNN3 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 3), 
+     metroRNN4 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 4), 
+     metroRNN5 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 5),
+     #bus stations
+     busNN1 = nn_function(st_c(st_centroid(train)), st_c(bus), 1),
+     busNN2 = nn_function(st_c(st_centroid(train)), st_c(bus), 2), 
+     busNN3 = nn_function(st_c(st_centroid(train)), st_c(bus), 3), 
+     busNN4 = nn_function(st_c(st_centroid(train)), st_c(bus), 4), 
+     busNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5),
+     #mall
+     mallNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 1),
+     mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2), 
+     mallNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 3), 
+     mallNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 4), 
+     mallNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 5))
+
  
 #add catchment info
  train <-
@@ -393,8 +421,6 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
  train <-
    st_intersection(tracts, train) %>%
    rename(censusTract = NAME10, tractPctWhite = pctWhite)
-   
- 
 
  ggplot() + 
    geom_sf(data = houses, aes(fill = commNN5), colour = "transparent") +
@@ -407,7 +433,17 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
 ####CORRELATION MATRIX####
 
 ####SCATTERPLOTS: 4 HOME PRICE CORRELATIONS (we choose, open data)####
-
+ st_drop_geometry(train) %>% 
+   mutate(Age = 2020 - YearBuilt) %>%
+   dplyr::select(SalePrice, elemCatch, Age, busNN5) %>%
+   filter(SalePrice <= 1000000, Age < 500) %>%
+   gather(Variable, Value, -SalePrice) %>% 
+   ggplot(aes(Value, SalePrice)) +
+   geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
+   facet_wrap(~Variable, ncol = 3, scales = "free") +
+   labs(title = "Price as a function of continuous variables") +
+   plotTheme()
+ 
 ####MAP: DEPENDENT VAR. (sale price)####
 ggplot() +
   geom_sf(data = tracts, colour = "white", fill = "gray") +
