@@ -12,6 +12,7 @@ library(stargazer)
 library(mapview)
 library(osmdata)
 library(tidycensus)
+library(tidygeocoder)
 
 mapTheme <- function(base_size = 12) {
   theme(
@@ -66,20 +67,50 @@ qBr <- function(df, variable, rnd) {
 
 q5 <- function(variable) {as.factor(ntile(variable, 5))}
 
+#nearest neighbor function 
+nn_function <- function(measureFrom,measureTo,k) {
+  measureFrom_Matrix <- as.matrix(measureFrom)
+  measureTo_Matrix <- as.matrix(measureTo)
+  nn <-   
+    get.knnx(measureTo, measureFrom, k)$nn.dist
+  output <-
+    as.data.frame(nn) %>%
+    rownames_to_column(var = "thisPoint") %>%
+    gather(points, point_distance, V1:ncol(.)) %>%
+    arrange(as.numeric(thisPoint)) %>%
+    group_by(thisPoint) %>%
+    summarize(pointDistance = mean(point_distance)) %>%
+    arrange(as.numeric(thisPoint)) %>% 
+    dplyr::select(-thisPoint) %>%
+    pull()
+  
+  return(output)  
+}
+
 ####READ DATA####
 #projected to NAD 1983 StatePlane Florida East FIPS 0901 Feet
 
 #Study area base
 miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658') %>%
   filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
-  st_as_sf %>%
   st_union()
 
 #Training + test data
 houses <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
+
+# houses.sf <-
+#  houses %>%
+ # mutate(full_address = str_glue("{Property.Address}, {Property.City}, {Mailing.State}")) %>%
+ # geocode(full_address) %>%
+
+# houses <- houses %>%
+#  mutate(list(LAT = st_coordinates(.)[,1]),
+#                list(LON = st_coordinates(.)[,2]))
+  
 
 train <- filter(houses, SalePrice != 0)
 predict <- filter(houses, SalePrice == 0) 
@@ -94,7 +125,7 @@ predict <- filter(houses, SalePrice == 0)
 
 #demographics + tracts
 demogr <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Tract_Pop_2010.geojson") %>%
-  st_transform('ESRI:102658') %>%
+  st_transform('ESRI:102658')
 
 tracts <- 
   rbind(
@@ -108,7 +139,9 @@ tracts <-
       left_join(demogr) %>%
       st_sf() %>%
       mutate(inMiami = "NO")) %>%
-  filter(inMiami == "YES")
+  filter(inMiami == "YES") %>%
+  mutate(pctWhite = WHITENH / POP2010) %>%
+  dplyr::select(NAME10, pctWhite)
   
 #OSM bounding box
 xmin = st_bbox(miamiBound)[[1]]
@@ -125,30 +158,78 @@ ymax = st_bbox(miamiBound)[[4]]
 #  .[miamiBound,]
 
 green <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/green.geojson") %>%
-  st_as_sf %>%
-  st_transform('ESRI:102658') %>% 
-  filter(CITY == "Miami" | CITY == "Miami Beach")
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+green <- rbind(
+    st_centroid(green)[miamiBound,] %>%
+      st_drop_geometry() %>%
+      left_join(green) %>%
+      st_sf() %>%
+      mutate(inMiami = "YES"),
+    st_centroid(green)[miamiBound, op = st_disjoint] %>%
+      st_drop_geometry() %>%
+      left_join(green) %>%
+      st_sf() %>%
+      mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES")
 
 #school dist
 schoolDist <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/School_Board_District.geojson") %>%
-  st_as_sf %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
 
 #Public school catchments
-elementarySchool <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Elementary_School_Attendance_Boundary.geojson") %>%
-  st_as_sf %>%
-  st_transform('ESRI:102658') %>% 
-  filter(CITY == "Miami" | CITY == "Miami Beach")
+elementary <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Elementary_School_Attendance_Boundary.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658') 
+elementary <- rbind(
+  st_centroid(elementary)[miamiBound,] %>%
+    st_drop_geometry() %>%
+    left_join(elementary) %>%
+    st_sf() %>%
+    mutate(inMiami = "YES"),
+  st_centroid(elementary)[miamiBound, op = st_disjoint] %>%
+    st_drop_geometry() %>%
+    left_join(elementary) %>%
+    st_sf() %>%
+    mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES") %>%
+  dplyr::select(NAME)
 
-middleSchool <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Middle_School_Attendance_Boundary.geojson") %>%
-  st_as_sf %>%
-  st_transform('ESRI:102658') %>% 
-  filter(CITY == "Miami" | CITY == "Miami Beach")
+middle <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Middle_School_Attendance_Boundary.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+middle <- rbind(
+  st_centroid(middle)[miamiBound,] %>%
+    st_drop_geometry() %>%
+    left_join(middle) %>%
+    st_sf() %>%
+    mutate(inMiami = "YES"),
+  st_centroid(middle)[miamiBound, op = st_disjoint] %>%
+    st_drop_geometry() %>%
+    left_join(middle) %>%
+    st_sf() %>%
+    mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES") %>%
+  dplyr::select(NAME)
 
-highSchool <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/High_School_Attendance_Boundary.geojson") %>%
-  st_as_sf %>%
-  st_transform('ESRI:102658') %>% 
-  filter(CITY == "Miami" | CITY == "Miami Beach")
+
+high <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/High_School_Attendance_Boundary.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+high <- rbind(
+  st_centroid(high)[miamiBound,] %>%
+    st_drop_geometry() %>%
+    left_join(high) %>%
+    st_sf() %>%
+    mutate(inMiami = "YES"),
+  st_centroid(high)[miamiBound, op = st_disjoint] %>%
+    st_drop_geometry() %>%
+    left_join(high) %>%
+    st_sf() %>%
+    mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES") %>%
+  dplyr::select(NAME)
 
 #crime - (vandalism could reduce home prices - broken windows theory)
   
@@ -247,6 +328,16 @@ commercial <- rbind(
     st_sf() %>%
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
+
+commercial.sf <-
+  commercial %>%
+  filter(LAT > -1) %>%
+  dplyr::select(LAT, LON) %>%
+  na.omit() %>%
+  st_as_sf(coords = c("LAT", "LON"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658') %>%
+  distinct()
+
 #flood zone
 flood <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/FEMA\ FLOOD\ ZONE") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -254,9 +345,9 @@ flood <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data
 
 #contaminated sites
 contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Multi-Property_Contaminated_Site.geojson") %>%
-  st_as_sf %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
- contamination <-
+ contaminated <-
    rbind(
   st_centroid(contaminated)[miamiBound,] %>%
     st_drop_geometry() %>%
@@ -270,10 +361,45 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
 
- 
  ################DATA WRANGLING################
+ #nearest neighbor commercial
+ st_c <- st_coordinates
  
+ train <-
+   train %>% 
+   mutate(
+     commNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
+     commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
+     commNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 3), 
+     commNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 4), 
+     commNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 5),
+
+     greenNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 5),
+     
+     #this could be improved - don't need Centroid
+     beachNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(beach)), 5),
+     ) 
  
+#add catchment info
+ train <-
+   st_intersection(elementary, train) %>%
+   rename(elemCatch = NAME) %>%
+   st_intersection(middle, train) %>%
+   rename(middleCatch = NAME) %>%
+   st_intersection(high, train) %>%
+   rename(highCatch = NAME)
+ 
+ #add census tract, race info
+ train <-
+   st_intersection(tracts, train) %>%
+   rename(censusTract = NAME10, tractPctWhite = pctWhite)
+   
+ 
+
+ ggplot() + 
+   geom_sf(data = houses, aes(fill = commNN5), colour = "transparent") +
+   scale_colour_manual(values = palette5) +
+   mapTheme()
 ################PART 1: DATA################
  
 ####TABLE: SUMM. STATS + VAR. DESCRIPTIONS (sorted by category)####
@@ -295,6 +421,27 @@ ggplot() +
   mapTheme()
 
 ####MAPS: 3 MOST INTERESTING INDEPENDENT VARS.####
+ ggplot() + geom_sf(data = tracts, fill = "grey40") +
+   stat_density2d(data = data.frame(st_coordinates(green)), 
+                  aes(X, Y, fill = ..level.., alpha = ..level..),
+                  size = 0.01, bins = 40, geom = 'polygon') +
+   scale_fill_gradient(low = "red", high = "green", name = "Density") +
+   scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
+   labs(title = "Density of Green Space, Miami") +
+   mapTheme()
+ 
+ ggplot() + geom_sf(data = tracts, fill = "grey40") +
+   stat_density2d(data = data.frame(st_coordinates(commercial)), 
+                  aes(X, Y, fill = ..level.., alpha = ..level..),
+                  size = 0.01, bins = 100, geom = 'polygon') +
+   scale_fill_gradient(low = "green", high = "orange", name = "Density") +
+   scale_alpha(range = c(0.00, 0.5), guide = FALSE) +
+   labs(title = "Density of Commercial Properties, Miami") +
+   mapTheme()
+ 
+ ggplot() + geom_sf(data = tracts, colour = "white", fill = "black") +
+   geom_sf(data = commercial, size = 0.1, colour = "yellow") +
+   mapTheme()
 
 ####OTHER MAPS/GRAPHS/CHARTS OF INTEREST####
 
