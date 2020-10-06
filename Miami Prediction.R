@@ -102,16 +102,6 @@ houses <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Dat
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
 
-# houses.sf <-
-#  houses %>%
- # mutate(full_address = str_glue("{Property.Address}, {Property.City}, {Mailing.State}")) %>%
- # geocode(full_address) %>%
-
-# houses <- houses %>%
-#  mutate(list(LAT = st_coordinates(.)[,1]),
-#                list(LON = st_coordinates(.)[,2]))
-  
-
 train <- filter(houses, SalePrice != 0)
 predict <- filter(houses, SalePrice == 0) 
 
@@ -362,12 +352,23 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
   filter(inMiami == "YES")
 
  ################DATA WRANGLING################
+ 
+ #split house set
+ train <- filter(houses, SalePrice != 0)
+ predict <- filter(houses, SalePrice == 0) 
+ 
+
+ ggplot() + 
+   geom_sf(data = train, aes(colour=q5(beachDist))) + 
+   scale_fill_manual(values = palette5) +
+   mapTheme()
  #nearest neighbor commercial
  st_c <- st_coordinates
  
  train <-
    train %>% 
    mutate(
+     beachDist = st_distance(train, beach),
      #commercial properties
      commNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
@@ -380,8 +381,6 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
      greenNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 3),
      greenNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 4),
      greenNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 5),
-     #this could be improved - don't need Centroid
-     beachNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(beach)), 1),
      #metro mover stations
      metroMNN1 = nn_function(st_c(st_centroid(train)), st_c(metromover), 1),
      metroMNN2 = nn_function(st_c(st_centroid(train)), st_c(metromover), 2), 
@@ -400,6 +399,10 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
      busNN3 = nn_function(st_c(st_centroid(train)), st_c(bus), 3), 
      busNN4 = nn_function(st_c(st_centroid(train)), st_c(bus), 4), 
      busNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5),
+     #culture
+     cultureNN1 = nn_function(st_c(st_centroid(train)), st_c(bus), 1),
+     cultureNN3 = nn_function(st_c(st_centroid(train)), st_c(bus), 3), 
+     cultureNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5), 
      #mall
      mallNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 1),
      mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2), 
@@ -408,6 +411,7 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
      mallNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 5))
 
  
+
 #add catchment info
  train <-
    st_intersection(elementary, train) %>%
@@ -423,14 +427,38 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
    rename(censusTract = NAME10, tractPctWhite = pctWhite)
 
  ggplot() + 
-   geom_sf(data = houses, aes(fill = commNN5), colour = "transparent") +
+   geom_sf(data = train, aes(fill = commNN5), colour = "transparent") +
    scale_colour_manual(values = palette5) +
    mapTheme()
+ 
+ 
+ 
+ 
+ #cor test
+ cor.test(train$LivingSqFt, train$SalePrice, method = "pearson")
+ 
+ #reg1
+ reg <- lm(SalePrice ~ ., data = st_drop_geometry(train) %>% 
+             dplyr::select(SalePrice, LivingSqFt, highCatch, 
+                           Bed, Bath, YearBuilt,
+                           censusTract, tractPctWhite))
+ summary(reg)
+ 
 ################PART 1: DATA################
  
 ####TABLE: SUMM. STATS + VAR. DESCRIPTIONS (sorted by category)####
 
 ####CORRELATION MATRIX####
+ numericVars <- 
+   select_if(st_drop_geometry(train), is.numeric) %>% na.omit()
+ 
+ ggcorrplot(
+   round(cor(numericVars), 1), 
+   p.mat = cor_pmat(numericVars),
+   colors = c("#25CB10", "white", "#FA7800"),
+   type="lower",
+   insig = "blank") +  
+   labs(title = "Correlation across numeric variables") 
 
 ####SCATTERPLOTS: 4 HOME PRICE CORRELATIONS (we choose, open data)####
  st_drop_geometry(train) %>% 
@@ -480,9 +508,6 @@ ggplot() +
    mapTheme()
 
 ####OTHER MAPS/GRAPHS/CHARTS OF INTEREST####
-
-
-
 
 
 ################PART 2: RESULTS################
