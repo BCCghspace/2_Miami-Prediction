@@ -1,3 +1,12 @@
+---
+title: "Miami Prediction"
+author: "Anna Duan"
+date: "10/7/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ####load libraries, etc
 library(tidyverse)
 library(sf)
@@ -87,10 +96,11 @@ nn_function <- function(measureFrom,measureTo,k) {
   
   return(output)  
 }
+```
 
-####READ DATA####
+
+```{r download data}
 #projected to NAD 1983 StatePlane Florida East FIPS 0901 Feet
-
 #Study area base
 miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
@@ -98,42 +108,59 @@ miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\
   filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
   st_union()
 
+
 #Training + test data
 houses <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
 
-train <- filter(houses, SalePrice != 0)
-predict <- filter(houses, SalePrice == 0) 
 
-#census
-#census_api_key("d9ebfd04caa0138647fbacd94c657cdecbf705e9", install = TRUE, overwrite = TRUE)
-#vacant property, mhhinc, white, population
-#acs <- 
-#  get_acs(geography = "tract", variables = c("B25005_002E", "B19013_001E", "B01001A_001E", "B01003_001E"), 
- #         year=2010, state=12, county=086, geometry=T) %>% 
-#  st_transform('ESRI:102658')
-
-#demographics + tracts
-demogr <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Tract_Pop_2010.geojson") %>%
+#Census
+census_api_key("d9ebfd04caa0138647fbacd94c657cdecbf705e9", install = TRUE, overwrite = TRUE)
+#read in: vacant property, total housing units, mhhinc, white, population, owner occ, renter occ, travel time to work
+acs <- 
+  get_acs(geography = "tract", variables = c("B25002_003E", "B25001_001E", "B19013_001E", "B01001A_001E", "B01003_001E", "B07013_002E", "B07013_003E", "B08012_001E"), year=2018, state=12, county=086, geometry=T) %>% 
   st_transform('ESRI:102658')
-
-tracts <- 
+#filter for Miami/Miami beach tracts
+acs <- 
   rbind(
-    st_centroid(demogr)[miamiBound,] %>%
+    st_centroid(acs)[miamiBound,] %>%
       st_drop_geometry() %>%
-      left_join(demogr) %>%
+      left_join(acs) %>%
       st_sf() %>%
       mutate(inMiami = "YES"),
-    st_centroid(demogr)[miamiBound, op = st_disjoint] %>%
+    st_centroid(acs)[miamiBound, op = st_disjoint] %>%
       st_drop_geometry() %>%
-      left_join(demogr) %>%
+      left_join(acs) %>%
       st_sf() %>%
       mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES") %>%
-  mutate(pctWhite = WHITENH / POP2010) %>%
-  dplyr::select(NAME10, pctWhite)
+  dplyr::select(-inMiami)
+#long to wide form
+acs <- 
+  acs %>%
+  dplyr::select(-moe, -GEOID) %>%
+  spread(variable, estimate) %>%
+  dplyr::select(-geometry) %>%
+  rename(vacantUnits = B25002_003, 
+         totalUnits = B25001_001,
+         medHHInc = B19013_001,
+         white = B01001A_001, 
+         population = B01003_001,
+         ownerOcc = B07013_002, 
+         renterOcc = B07013_003,
+         timeToWork = B08012_001)
+#mutate
+acs <- 
+  acs %>%
+  mutate(pctVacant = ifelse(totalUnits > 0, vacantUnits / totalUnits, 0),
+         pctWhite = ifelse(population > 0, white / population, 0),
+         totalOcc = ownerOcc + renterOcc,
+         pctRenterOcc = ifelse(totalOcc > 0, renterOcc / totalOcc, 0),
+         year = "2018") %>%
+  dplyr::select(-totalUnits,-vacantUnits,-totalUnits,-population,-white, -ownerOcc, -renterOcc, -totalOcc)
   
+
 #OSM bounding box
 xmin = st_bbox(miamiBound)[[1]]
 ymin = st_bbox(miamiBound)[[2]]
@@ -141,10 +168,10 @@ xmax = st_bbox(miamiBound)[[3]]
 ymax = st_bbox(miamiBound)[[4]]
 
 #bars, restaurants, shopping
-#foodBev <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+# foodBev <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
 #  add_osm_feature(key = 'amenity', value = c("bar","pub","restaurant","cafe")) %>%
 #  osmdata_sf()
-#foodBev <-
+# foodBev <-
 #  foodBev$osm_points %>%
 #  .[miamiBound,]
 
@@ -168,6 +195,7 @@ green <- rbind(
 schoolDist <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/School_Board_District.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
+
 
 #Public school catchments
 elementary <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Elementary_School_Attendance_Boundary.geojson") %>%
@@ -204,7 +232,6 @@ middle <- rbind(
   filter(inMiami == "YES") %>%
   dplyr::select(NAME)
 
-
 high <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/High_School_Attendance_Boundary.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
@@ -223,23 +250,7 @@ high <- rbind(
   dplyr::select(NAME)
 
 #crime - (vandalism could reduce home prices - broken windows theory)
-  
-#beaches
-# beach <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Beach_Polygon.geojson") %>%
-#  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
-#  st_transform('ESRI:102658')
-#beach <-   rbind(
-#  st_centroid(beach)[miamiBound,] %>%
-#    st_drop_geometry() %>%
-#    left_join(beach) %>%
-#    st_sf() %>%
-#    mutate(inMiami = "YES"),
-#  st_centroid(beach)[miamiBound, op = st_disjoint] %>%
-#    st_drop_geometry() %>%
-#    left_join(beach) %>%
-#    st_sf() %>%
-#    mutate(inMiami = "NO")) %>%
-#  filter(inMiami == "YES")
+
 
 water <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Water.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -350,6 +361,21 @@ flood <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658') 
 
+ flood <-
+   rbind(
+  st_centroid(flood)[miamiBound,] %>%
+    st_drop_geometry() %>%
+    left_join(flood) %>%
+    st_sf() %>%
+    mutate(inMiami = "YES"),
+  st_centroid(flood)[miamiBound, op = st_disjoint] %>%
+    st_drop_geometry() %>%
+    left_join(flood) %>%
+    st_sf() %>%
+    mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES") %>%
+   dplyr::select(-inMiami, -FID, -FZONE, -ZONESUBTY, -SHAPE_Length, -ELEV)
+ 
 #contaminated sites
 contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Multi-Property_Contaminated_Site.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -367,8 +393,10 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
     st_sf() %>%
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
+```
 
- ################DATA WRANGLING################
+
+```{r wrangle, echo=FALSE}
  
  #split house set
  train <- filter(houses, SalePrice != 0)
@@ -429,12 +457,17 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
  
-   
-
+ #nearest neighbors
  st_c <- st_coordinates
  train <-
    train %>% 
    mutate(
+     #contaminated
+     contaminatedNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
+     contaminatedNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2),
+     contaminatedNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 3),
+     contaminatedNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 4),
+     contaminatedNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 5))
      #commercial properties NN
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
      #green space
@@ -462,16 +495,21 @@ summary(train)
    st_intersection(high, train) %>%
    rename(highCatch = NAME)
  
- #add census tract, race info
+ #add school districts
  train <-
-   st_intersection(tracts, train) %>%
-   rename(censusTract = NAME10, tractPctWhite = pctWhite)
-
- ggplot() + 
-   geom_sf(data = train, aes(fill = commNN5), colour = "transparent") +
-   scale_colour_manual(values = palette5) +
-   mapTheme()
+   st_intersection(schoolDist, train) %>%
+   rename(schoolDist = ID)
  
+ #add census
+ train <- 
+   st_intersection(acs, train) %>%
+   rename(censusTract = NAME)
+ 
+ 
+```
+
+
+```{r correlation}
  #cor test
  cor.test(train.group$distWater, train.group$SalePrice, method = "pearson")
  
@@ -481,11 +519,7 @@ summary(train)
                            Bed, Bath, LotSize, Stories, Zoning, YearBuilt, Property.Zip, greenNN1, cultureNN5, commNN2))
  summary(reg)
  
-################PART 1: DATA################
- 
-####TABLE: SUMM. STATS + VAR. DESCRIPTIONS (sorted by category)####
-
-####CORRELATION MATRIX####
+ #corr matrix
  numericVars <- 
    select_if(st_drop_geometry(train), is.numeric) %>% na.omit()
  
@@ -496,23 +530,15 @@ summary(train)
    type="lower",
    insig = "blank") +  
    labs(title = "Correlation across numeric variables") 
-
-####SCATTERPLOTS: 4 HOME PRICE CORRELATIONS (we choose, open data)####
- st_drop_geometry(train) %>% 
-   mutate(Age = 2020 - YearBuilt) %>%
-   dplyr::select(SalePrice, elemCatch, Age, busNN5) %>%
-   filter(SalePrice <= 1000000, Age < 500) %>%
-   gather(Variable, Value, -SalePrice) %>% 
-   ggplot(aes(Value, SalePrice)) +
-   geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
-   facet_wrap(~Variable, ncol = 3, scales = "free") +
-   labs(title = "Price as a function of continuous variables") +
-   plotTheme()
  
+ 
+ 
+```
+
+```{r testing figures}
 ####MAP: DEPENDENT VAR. (sale price)####
 ggplot() +
   geom_sf(data = tracts, colour = "white", fill = "gray") +
-#  geom_sf(data = miamiBound, fill = "black") +
   geom_sf(data = train, aes(colour = q5(SalePrice)), 
           show.legend = "point", size = 0.7) +
   scale_colour_manual(values = palette5,
@@ -520,55 +546,10 @@ ggplot() +
                       name="Quintile\nBreaks") +
   labs(title="Home Sale Price", subtitle="Miami, FL") +
   mapTheme()
+```
 
-####MAPS: 3 MOST INTERESTING INDEPENDENT VARS.####
- ggplot() + geom_sf(data = tracts, fill = "grey40") +
-   stat_density2d(data = data.frame(st_coordinates(green)), 
-                  aes(X, Y, fill = ..level.., alpha = ..level..),
-                  size = 0.01, bins = 40, geom = 'polygon') +
-   scale_fill_gradient(low = "red", high = "green", name = "Density") +
-   scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
-   labs(title = "Density of Green Space, Miami") +
-   mapTheme()
- 
- ggplot() + geom_sf(data = tracts, fill = "grey40") +
-   stat_density2d(data = data.frame(st_coordinates(commercial)), 
-                  aes(X, Y, fill = ..level.., alpha = ..level..),
-                  size = 0.01, bins = 100, geom = 'polygon') +
-   scale_fill_gradient(low = "green", high = "orange", name = "Density") +
-   scale_alpha(range = c(0.00, 0.5), guide = FALSE) +
-   labs(title = "Density of Commercial Properties, Miami") +
-   mapTheme()
- 
- ggplot() + geom_sf(data = tracts, colour = "white", fill = "black") +
-   geom_sf(data = commercial, size = 0.1, colour = "yellow") +
-   mapTheme()
- 
+```{r cross validation}
+```
 
-####OTHER MAPS/GRAPHS/CHARTS OF INTEREST####
-
-
-################PART 2: RESULTS################
-####SPLIT toPredict == 0 into TRAINING and TEST sets####
-
-####TABLE: TRAINING LM SUMMARY RESULTS####
-
-####TABLE: MAE, MAPE FOR SINGLE TEST SET####
-
-####CROSS-VALIDATION TEST RESULTS - 100 FOLDS (PLOT X-VALID MAE AS HISTOGRAM)####
-
-####PLOT: PREDICTED PRICES x OBSERVED PRICES####
-
-####MAP: TEST SET RESIDUALS####
-
-####MORANS I TEST####
-
-####PLOT OF SPATIAL LAG IN ERRORS####
-
-####MAP: PREDICTED VALUES FOR WHERE toPREDICT IS BOTH 0 and 1####
-
-####MAP: MAPE BY NEIGHBORHOOD (USE TEST SET PREDICTIONS)####
-
-####SCATTERPLOT: MAPE BY NEIGHBORHOOD AS FUNCTION OF MEAN PRICE BY NEIGHBORHOOD####
-
-####TEST GENERALIZABILITY: SPLIT CITY INTO 2 GROUPS WITH TIDYCENSUS (e.g. income, race)####
+```{r final figures}
+```
