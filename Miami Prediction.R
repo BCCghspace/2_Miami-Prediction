@@ -224,18 +224,34 @@ high <- rbind(
 #crime - (vandalism could reduce home prices - broken windows theory)
   
 #beaches
-beach <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Beach_Polygon.geojson") %>%
+# beach <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Beach_Polygon.geojson") %>%
+#  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+#  st_transform('ESRI:102658')
+#beach <-   rbind(
+#  st_centroid(beach)[miamiBound,] %>%
+#    st_drop_geometry() %>%
+#    left_join(beach) %>%
+#    st_sf() %>%
+#    mutate(inMiami = "YES"),
+#  st_centroid(beach)[miamiBound, op = st_disjoint] %>%
+#    st_drop_geometry() %>%
+#    left_join(beach) %>%
+#    st_sf() %>%
+#    mutate(inMiami = "NO")) %>%
+#  filter(inMiami == "YES")
+
+water <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Water.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
-beach <-   rbind(
-  st_centroid(beach)[miamiBound,] %>%
+water <- rbind(
+  water[miamiBound,] %>%
     st_drop_geometry() %>%
-    left_join(beach) %>%
+    left_join(water) %>%
     st_sf() %>%
     mutate(inMiami = "YES"),
-  st_centroid(beach)[miamiBound, op = st_disjoint] %>%
+  water[miamiBound, op = st_disjoint] %>%
     st_drop_geometry() %>%
-    left_join(beach) %>%
+    left_join(water) %>%
     st_sf() %>%
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
@@ -357,60 +373,82 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
  train <- filter(houses, SalePrice != 0)
  predict <- filter(houses, SalePrice == 0) 
  
-
- ggplot() + 
-   geom_sf(data = train, aes(colour=q5(beachDist))) + 
-   scale_fill_manual(values = palette5) +
-   mapTheme()
- #nearest neighbor commercial
- st_c <- st_coordinates
+ #TOD
+ metroRBuffer <- 
+   rbind(
+     st_buffer(metrorail, 0.5*5280) %>% #in feet
+       mutate(Legend = "Buffer") %>%
+       dplyr::select(Legend),
+     st_union(st_buffer(metrorail, 0.5*5280)) %>% #union buffer
+       st_sf() %>%
+       mutate(Legend = "Unioned Buffer"))
  
+ ggplot() +
+   geom_sf(data=st_union(tracts)) +
+   geom_sf(data=metroRBuffer) +
+   geom_sf(data=metrorail, show.legend = "point") +
+   facet_wrap(~Legend) +  #wrap by years and make small multiple plots
+   labs(caption = "Figure 1.2") +
+   mapTheme()
+ 
+# metroMBuffer <- 
+#   rbind(
+#     st_buffer(metromover, 0.5*5280) %>% #in feet
+#       mutate(Legend = "Buffer") %>%
+#       dplyr::select(Legend),
+#     st_union(st_buffer(metromover, 0.5*5280)) %>% #union buffer
+#       st_sf() %>%
+#       mutate(Legend = "Unioned Buffer"))
+ 
+# busBuffer <- 
+#  rbind(
+#     st_buffer(bus, 0.5*5280) %>% #in feet
+#       mutate(Legend = "Buffer") %>%
+#       dplyr::select(Legend),
+#     st_union(st_buffer(bus, 0.5*5280)) %>% #union buffer
+#      st_sf() %>%
+#       mutate(Legend = "Unioned Buffer"))
+ 
+ train.group <- 
+   rbind(
+     st_centroid(train)[metroRBuffer,] %>%
+       st_drop_geometry() %>%
+       left_join(train) %>%
+       st_sf() %>%
+       mutate(TOD = 1),
+     st_centroid(train)[metroRBuffer, op = st_disjoint] %>%
+       st_drop_geometry() %>%
+       left_join(train) %>%
+       st_sf() %>%
+       mutate(TOD = 0))
+ 
+ #beaches/water
+ houseCentroid <- st_centroid(train)
+ train <- houseCentroid %>%
+   mutate(distWater = st_distance(., water)) %>%
+     mutate(distWater = as.numeric(distWater)) 
+
+ st_c <- st_coordinates
  train <-
    train %>% 
    mutate(
-     beachDist = st_distance(train, beach),
-     #commercial properties
-     commNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
+     #commercial properties NN
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
-     commNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 3), 
-     commNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 4), 
-     commNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 5),
      #green space
      greenNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 1),
-     greenNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 2),
-     greenNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 3),
-     greenNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 4),
-     greenNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 5),
      #metro mover stations
-     metroMNN1 = nn_function(st_c(st_centroid(train)), st_c(metromover), 1),
-     metroMNN2 = nn_function(st_c(st_centroid(train)), st_c(metromover), 2), 
-     metroMNN3 = nn_function(st_c(st_centroid(train)), st_c(metromover), 3), 
-     metroMNN4 = nn_function(st_c(st_centroid(train)), st_c(metromover), 4), 
      metroMNN5 = nn_function(st_c(st_centroid(train)), st_c(metromover), 5),
      #metro rail stations
      metroRNN1 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 1),
-     metroRNN2 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 2), 
-     metroRNN3 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 3), 
-     metroRNN4 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 4), 
-     metroRNN5 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 5),
      #bus stations
-     busNN1 = nn_function(st_c(st_centroid(train)), st_c(bus), 1),
-     busNN2 = nn_function(st_c(st_centroid(train)), st_c(bus), 2), 
-     busNN3 = nn_function(st_c(st_centroid(train)), st_c(bus), 3), 
-     busNN4 = nn_function(st_c(st_centroid(train)), st_c(bus), 4), 
      busNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5),
      #culture
-     cultureNN1 = nn_function(st_c(st_centroid(train)), st_c(bus), 1),
-     cultureNN3 = nn_function(st_c(st_centroid(train)), st_c(bus), 3), 
      cultureNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5), 
      #mall
-     mallNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 1),
-     mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2), 
-     mallNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 3), 
-     mallNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 4), 
-     mallNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 5))
+     mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2))
 
- 
+summary(train)
+
 
 #add catchment info
  train <-
@@ -431,17 +469,13 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
    scale_colour_manual(values = palette5) +
    mapTheme()
  
- 
- 
- 
  #cor test
- cor.test(train$LivingSqFt, train$SalePrice, method = "pearson")
+ cor.test(train.group$TOD, train.group$SalePrice, method = "pearson")
  
  #reg1
- reg <- lm(SalePrice ~ ., data = st_drop_geometry(train) %>% 
-             dplyr::select(SalePrice, LivingSqFt, highCatch, 
-                           Bed, Bath, YearBuilt,
-                           censusTract, tractPctWhite))
+ reg <- lm(SalePrice ~ ., data = st_drop_geometry(train.group) %>% 
+             dplyr::select(SalePrice, TOD, LivingSqFt, elemCatch, highCatch, middleCatch,
+                           Bed, Bath, LotSize, Stories, Zoning, YearBuilt, Property.Zip, greenNN1, cultureNN5, commNN2))
  summary(reg)
  
 ################PART 1: DATA################
@@ -505,6 +539,11 @@ ggplot() +
  
  ggplot() + geom_sf(data = tracts, colour = "white", fill = "black") +
    geom_sf(data = commercial, size = 0.1, colour = "yellow") +
+   mapTheme()
+ 
+ ggplot() + 
+   geom_sf(data = train, aes(colour=q5(beachDist))) + 
+   scale_fill_manual(values = palette5) +
    mapTheme()
 
 ####OTHER MAPS/GRAPHS/CHARTS OF INTEREST####
