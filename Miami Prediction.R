@@ -197,9 +197,9 @@ dd18_5 <- load_variables(year = 2018, dataset = "acs5", cache = TRUE)
 #https://www.socialexplorer.com/data/ACS2018_5yr/metadata/?ds=ACS18_5yr table to look for useful acs information
 
 #demographics + tracts
-demogr <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/Tract_Pop_2010.geojson")
+#demogr <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/Tract_Pop_2010.geojson")
 #demogr <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Tract_Pop_2010.geojson") %>%
-  st_transform('ESRI:102658')
+#  st_transform('ESRI:102658')
 #BC can't find such data
 tracts <- 
   rbind(
@@ -528,16 +528,16 @@ shop <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/shop_point.g
        mutate(TOD = 0))
  
  #beaches/water
- houseCentroid <- st_centroid(train)
- train <- houseCentroid %>%
+ houseCentroid <- st_centroid(houses)
+ houses <- houseCentroid %>%
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
- 
+ #not sure what is this train
    
 
  st_c <- st_coordinates
- train <-
-   train %>% 
+ houses <-
+   houses %>% 
    mutate(
      #commercial properties NN
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
@@ -554,25 +554,25 @@ shop <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/shop_point.g
      #mall
      mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2))
 
-summary(train)
+summary(houses)
 
 
 #add catchment info
- train <-
-   st_intersection(elementary, train) %>%
+ houses <-
+   st_intersection(elementary, houses) %>%
    rename(elemCatch = NAME) %>%
-   st_intersection(middle, train) %>%
+   st_intersection(middle, houses) %>%
    rename(middleCatch = NAME) %>%
-   st_intersection(high, train) %>%
+   st_intersection(high, houses) %>%
    rename(highCatch = NAME)
  
  #add census tract, race info
- train <-
-   st_intersection(tracts, train) %>%
+ houses <-
+   st_intersection(tracts, houses) %>%
    rename(censusTract = NAME10, tractPctWhite = pctWhite)
 
  ggplot() + 
-   geom_sf(data = train, aes(fill = commNN5), colour = "transparent") +
+   geom_sf(data = houses, aes(fill = commNN5), colour = "transparent") +
    scale_colour_manual(values = palette5) +
    mapTheme()
  
@@ -597,7 +597,7 @@ summary(train)
 
 ####CORRELATION MATRIX####
  numericVars <- 
-   select_if(st_drop_geometry(train), is.numeric) %>% na.omit()
+   select_if(st_drop_geometry(houses), is.numeric) %>% na.omit()
  
  ggcorrplot(
    round(cor(numericVars), 1), 
@@ -608,7 +608,7 @@ summary(train)
    labs(title = "Correlation across numeric variables") 
 
 ####SCATTERPLOTS: 4 HOME PRICE CORRELATIONS (we choose, open data)####
- st_drop_geometry(train) %>% 
+ st_drop_geometry(houses) %>% 
    mutate(Age = 2020 - YearBuilt) %>%
    dplyr::select(SalePrice, elemCatch, Age, busNN5) %>%
    filter(SalePrice <= 1000000, Age < 500) %>%
@@ -623,10 +623,10 @@ summary(train)
 ggplot() +
   geom_sf(data = tracts, colour = "white", fill = "gray") +
 #  geom_sf(data = miamiBound, fill = "black") +
-  geom_sf(data = train, aes(colour = q5(SalePrice)), 
+  geom_sf(data = houses, aes(colour = q5(SalePrice)), 
           show.legend = "point", size = 0.7) +
   scale_colour_manual(values = palette5,
-                      labels=qBr(train,"SalePrice"),
+                      labels=qBr(houses,"SalePrice"),
                       name="Quintile\nBreaks") +
   labs(title="Home Sale Price", subtitle="Miami, FL") +
   mapTheme()
