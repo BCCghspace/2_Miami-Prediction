@@ -206,7 +206,7 @@ st_drop_geometry(boston.sf) %>%       #drop geometry from boston home sales data
 
 boston %>% 
   dplyr::select(SalePrice, Style, OWN_OCC, NUM_FLOORS) %>% #select these variables as subset
-  mutate(NUM_FLOORS = as.factor(NUM_FLOORS)) %>%    #make NUM_FLOORS into a factor. This means make it a category variabe
+  mutate(NUM_FLOORS = as.factor(NUM_FLOORS)) %>%    #make NUM_FLOORS into a factor. This means make it a category variable
   filter(SalePrice <= 1000000) %>%         #filter for houses less than/equal to that price
   gather(Variable, Value, -SalePrice) %>%  #make into long form data
    ggplot(aes(Value, SalePrice)) +         #plot style, ownerOcc, numFloors by sales price 

@@ -101,6 +101,8 @@ nn_function <- function(measureFrom,measureTo,k) {
 
 ```{r download data}
 #projected to NAD 1983 StatePlane Florida East FIPS 0901 Feet
+
+
 #Study area base
 miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
@@ -184,12 +186,13 @@ green <- rbind(
       left_join(green) %>%
       st_sf() %>%
       mutate(inMiami = "YES"),
-    st_centroid(green)[miamiBound, op = st_disjoint] %>%
+    green[miamiBound, op = st_disjoint] %>%
       st_drop_geometry() %>%
       left_join(green) %>%
       st_sf() %>%
       mutate(inMiami = "NO")) %>%
-  filter(inMiami == "YES")
+  filter(inMiami == "YES") %>%
+  mutate(counter = 1)
 
 #school dist
 schoolDist <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/School_Board_District.geojson") %>%
@@ -374,7 +377,8 @@ flood <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data
     st_sf() %>%
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES") %>%
-   dplyr::select(-inMiami, -FID, -FZONE, -ZONESUBTY, -SHAPE_Length, -ELEV)
+   dplyr::select(-inMiami, -SHAPE_Length, -ELEV, -FID) %>%
+   dplyr::rename(FloodZone = FZONE, FloodHazard = ZONESUBTY)
  
 #contaminated sites
 contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Multi-Property_Contaminated_Site.geojson") %>%
@@ -403,14 +407,11 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
  predict <- filter(houses, SalePrice == 0) 
  
  #TOD
- metroRBuffer <- 
-   rbind(
-     st_buffer(metrorail, 0.5*5280) %>% #in feet
-       mutate(Legend = "Buffer") %>%
-       dplyr::select(Legend),
-     st_union(st_buffer(metrorail, 0.5*5280)) %>% #union buffer
-       st_sf() %>%
-       mutate(Legend = "Unioned Buffer"))
+ metroRBuffer <- metrorail %>% 
+     st_buffer(0.5*5280) %>% #in feet
+   st_union() %>% 
+   st_as_sf() %>% 
+   mutate(TOD = 1)
  
  ggplot() +
    geom_sf(data=st_union(tracts)) +
@@ -437,19 +438,25 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
 #     st_union(st_buffer(bus, 0.5*5280)) %>% #union buffer
 #      st_sf() %>%
 #       mutate(Legend = "Unioned Buffer"))
+ # train.group <- 
+ #   rbind(
+ #     st_centroid(train)[metroRBuffer,] %>%
+ #       st_drop_geometry() %>%
+ #       left_join(train) %>%
+ #       st_sf() %>%
+ #       mutate(TOD = 1),
+ #     st_centroid(train)[metroRBuffer, op = st_disjoint] %>%
+ #       st_drop_geometry() %>%
+ #       left_join(train) %>%
+ #       st_sf() %>%
+ #       mutate(TOD = 0))
+ # 
+ train$TOD <- train %>% 
+   st_centroid() %>% 
+   st_join(metroRBuffer) %>% 
+   mutate(TOD = ifelse(is.na(TOD), 0, 1)) %>%
+   pull(TOD)
  
- train.group <- 
-   rbind(
-     st_centroid(train)[metroRBuffer,] %>%
-       st_drop_geometry() %>%
-       left_join(train) %>%
-       st_sf() %>%
-       mutate(TOD = 1),
-     st_centroid(train)[metroRBuffer, op = st_disjoint] %>%
-       st_drop_geometry() %>%
-       left_join(train) %>%
-       st_sf() %>%
-       mutate(TOD = 0))
  
  #beaches/water
  houseCentroid <- st_centroid(train)
@@ -457,21 +464,18 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
  
+ 
  #nearest neighbors
  st_c <- st_coordinates
  train <-
    train %>% 
    mutate(
      #contaminated
-     contaminatedNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 1),
      contaminatedNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2),
-     contaminatedNN3 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 3),
-     contaminatedNN4 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 4),
-     contaminatedNN5 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 5))
      #commercial properties NN
      commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
      #green space
-     greenNN1 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(green)), 1),
+     greenNN1 = nn_function(st_c(st_centroid(train)), st_c(green), 1),
      #metro mover stations
      metroMNN5 = nn_function(st_c(st_centroid(train)), st_c(metromover), 5),
      #metro rail stations
@@ -483,8 +487,24 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
      #mall
      mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2))
 
-summary(train)
 
+ #green buffer  - using ___ buffer distance because the mean NN1 = 14
+ greenCentroids <- green %>% 
+  # st_centroid(green) %>%    #get centroids of green layer
+  dplyr::select(counter)    
+ 
+ train$green.Buffer =
+   st_buffer(train, 1487) %>%
+   aggregate(greenCentroids, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+
+ train <- train %>%
+   mutate(green.Buffer = replace_na(green.Buffer, 0))  #replace NA values in counter to 0
+          # greenArea = as.numeric(st_area(green)))  #make new area var., calculate area
+   
+  
+summary(train)
 
 #add catchment info
  train <-
@@ -495,10 +515,12 @@ summary(train)
    st_intersection(high, train) %>%
    rename(highCatch = NAME)
  
+ 
  #add school districts
  train <-
    st_intersection(schoolDist, train) %>%
    rename(schoolDist = ID)
+ 
  
  #add census
  train <- 
@@ -506,13 +528,34 @@ summary(train)
    rename(censusTract = NAME)
  
  
+ #add flood
+ train <-
+   st_intersection(flood, train) %>%
+   dplyr::select(-SHAPE_Area)
+   
+ 
+ 
 ```
 
 
 ```{r correlation}
  #cor test
- cor.test(train.group$distWater, train.group$SalePrice, method = "pearson")
+ cor.test(train$distWater, train$SalePrice, method = "pearson")
  
+ggplot() +
+  geom_sf(data = miamiBound) +
+  geom_sf(data = flood, aes(fill = FloodZone)) +
+  geom_sf(data = train, aes(colour = q5(SalePrice))) +
+  scale_fill_manual(values = palette5) +
+  mapTheme()
+
+ggplot() +
+  geom_sf(data = miamiBound) +
+  geom_sf(data = contaminated, aes(fill = "red")) +
+  geom_sf(data = train, aes(colour = q5(SalePrice))) +
+  scale_fill_manual(values = palette5) +
+  mapTheme()
+
  #reg1
  reg <- lm(SalePrice ~ ., data = st_drop_geometry(train.group) %>% 
              dplyr::select(SalePrice, TOD, LivingSqFt, elemCatch, highCatch, middleCatch,
