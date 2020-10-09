@@ -119,11 +119,13 @@ miamiBoundOSM <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/R
   filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
   st_union()
 
-
 #Training + test data
 houses <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
+
+#Training + test data for OSM (Not projected)
+housesOSM <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/studentsData.geojson")
 
 
 #Census
@@ -200,17 +202,25 @@ ymax = st_bbox(miamiBoundOSM)[[4]]
       mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES") %>%
    dplyr::select(name)
-
  
- #shore
-shore <-opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+#shore
+Coastline<-opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
   add_osm_feature("natural", "coastline") %>%
-   osmdata_xml(filename = 'shore.osm')
+  osmdata_sf()
 
- shore <- sf::st_read('shore.osm', layer = 'lines') %>%
-     st_as_sf(coords = c("LON", "LAT"), crs = EPSG:3857, agr = "constant") %>%
-  st_transform('ESRI:102658')
+#add to housesOSM and convert to miles, then add to houses
+housesOSM <-
+  housesOSM %>%  
+  mutate(CoastDist=(geosphere::dist2Line(p=st_coordinates(st_centroid(housesOSM)),
+                                        line=st_coordinates(Coastline$osm_lines)[,1:2])*0.00062137)[,1])
+houses <-
+  houses %>%
+  mutate(distWater = housesOSM$CoastDist)
 
+ggplot() +
+  geom_sf(data = acs) +
+  geom_sf(data = houses, aes(colour = distWater)) +
+  mapTheme()
 
 #green space
 green <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/green.geojson") %>%
@@ -492,13 +502,15 @@ shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/
    mutate(TOD = ifelse(is.na(TOD), 0, 1)) %>%
    pull(TOD)
  
- #Shoreline attempt 1 (might be wrong)
+ 
+ 
+ #Shoreline attempt 1 (seems wrong + can't plot it)
  houseCentroid <- st_centroid(houses)
  houses <- houseCentroid %>%
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
  
- #Shoreline attempt 2 (openstreetmap): not working but this seems to be the most promising. I'm not able to attach it to houses yet and the projection is off even though crs(shore) tells me it has the same projection as houses.
+#Shoreline attempt 2 (openstreetmap): not working but this seems to be the most promising. I'm not able to attach it to houses yet and the projection is off even though crs(shore) tells me it has the same projection as houses.
  houses <-
   houses %>%  
   mutate(shoreDist=(geosphere::dist2Line(p=st_coordinates(st_centroid(houses)),
@@ -624,7 +636,9 @@ summary(houses)
 #land? bldg?total?
  
  #cor test
- cor.test(houses$foodBevNN4, houses$SalePrice, method = "pearson")
+ houses[[distWater]] <- houses$distWater
+ 
+ cor.test(houses$distWater, houses$SalePrice, method = "pearson")
  
  #trying to plot distWater to see if it's right... not working yet
 ggplot() +
