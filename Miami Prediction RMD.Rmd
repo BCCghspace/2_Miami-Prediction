@@ -256,7 +256,9 @@ parks <- bind_rows(muniParks, countyParks) %>%
 #school dist
 schoolDist <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/School_Board_District.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
-  st_transform('ESRI:102658')
+  st_transform('ESRI:102658') %>%
+  dplyr::select(ID) %>%
+  mutate (ID = as.numeric(ID))
 
 
 #Public school catchments
@@ -313,7 +315,6 @@ high <- rbind(
 
 #crime - (vandalism could reduce home prices - broken windows theory)
 
-
 water <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Water.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
@@ -330,11 +331,6 @@ water <- rbind(
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
 
-#malls
-malls <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Major_Mall.geojson") %>%
-  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
-  st_transform('ESRI:102658') %>% 
-  filter(CITY == "Miami" | CITY == "Miami Beach")
 
 #transport
 bus <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Bus_Stop.geojson") %>%
@@ -523,9 +519,7 @@ shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/
      #contaminated
      contaminatedNN2 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2),
      #commercial properties NN
-     commNN2 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2), 
-     #green space
-     greenNN1 = nn_function(st_c(st_centroid(houses)), st_c(green), 1),
+     commNN1 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2),
      #parks
      parkNN1 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(parks)), 1),
      #metro mover stations
@@ -533,34 +527,100 @@ shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/
      #metro rail stations
      metroRNN1 = nn_function(st_c(st_centroid(houses)), st_c(metrorail), 1),
      #bus stations
-     busNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
+     busNN1 = nn_function(st_c(st_centroid(houses)), st_c(bus), 1),
      #culture
-     cultureNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
+     cultureNN1 = nn_function(st_c(st_centroid(houses)), st_c(bus), 1),
      #food/drinks
-     foodBevNN4 = nn_function(st_c(st_centroid(houses)), st_c(foodBev), 4))
+     foodBevNN1 = nn_function(st_c(st_centroid(houses)), st_c(foodBev), 1))
 
+#COMMERCIAL
+ commercial <- commercial %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count properties within each buffer
+houses$commercialProperties <-
+   st_buffer(houses, 846) %>%
+   aggregate(commercial, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+ 
+#FOOD AND BEV
+ foodBev <- foodBev %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count parks within each buffer
+houses$foodEstablishments <-
+   st_buffer(houses, 2774) %>%
+   aggregate(foodBev, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
 
- #green buffer  - using 1600ft buffer distance because the mean NN1 = 1600
+#CULTURE
+ culture <- culture %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count culture within each buffer
+houses$cultureSpots <-
+   st_buffer(houses, 774) %>%
+   aggregate(culture, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+
+#METRORAIL
+ metrorail <- metrorail %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count metroR within each buffer
+houses$metrorailStops <-
+   st_buffer(houses, 12076.7) %>%
+   aggregate(metrorail, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+
+#METROMOVER
+ metromover <- metromover %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count metroR within each buffer
+houses$metromoverStops <-
+   st_buffer(houses, 18845) %>%
+   aggregate(metromover, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+
+#BUS
+ bus <- bus %>% 
+   mutate(counter = 1) %>%
+   dplyr::select(counter)
+ #count bus within each buffer
+houses$busStops <-
+   st_buffer(houses, 775) %>%
+   aggregate(bus, ., sum) %>% 
+   st_drop_geometry() %>% 
+   pull(counter)
+ 
+ #PARKS (using 1600ft buffer distance because the mean NN1 = 1600)
+ #get centroids
  parkCentroids <- parks %>% 
    st_centroid(parks) %>%    #get centroids of park layer
   dplyr::select(counter)
- 
+ #count parks within each buffer
 houses$parkCount <-
    st_buffer(houses, 1600) %>%
    aggregate(parkCentroids, ., sum) %>% 
    st_drop_geometry() %>% 
    pull(counter)
- 
+#make buffer for each house
 parkBuffer <- st_buffer(houses, 1600) %>%
   dplyr::select(Property.Address) %>%
-  st_as_sf() 
-
+  st_as_sf()
+#calculate area of park space in each buffer
 bufferedParks <- st_intersection(parkBuffer, parks) %>%
   group_by(Property.Address) %>%
   summarise() %>%
   mutate(parkArea = units::drop_units(st_area(.))) %>%
   st_drop_geometry()
-
+#add park area back to houses file
 houses <-
   left_join(houses, bufferedParks)
 
@@ -568,15 +628,6 @@ ggplot() +
   geom_sf(data = houses, aes(colour = q5(parkArea))) +
   scale_fill_manual(values = palette5) +
   mapTheme()
-
-
-
- houses <- houses %>%
-   mutate(green.Buffer = replace_na(green.Buffer, 0))  #replace NA values in counter to 0
-          # greenArea = as.numeric(st_area(green)))  #make new area var., calculate area
-
-  
-summary(houses)
 
 #add catchment info
  houses <-
@@ -587,25 +638,21 @@ summary(houses)
    st_intersection(high, houses) %>%
    rename(highCatch = NAME)
  
- 
  #add school districts
  houses <-
    st_intersection(schoolDist, houses) %>%
    rename(schoolDist = ID)
- 
  
  #add census
  houses <- 
    st_intersection(acs, houses) %>%
    rename(censusTract = NAME)
  
- 
  #add flood
  houses <-
    st_intersection(flood, houses) %>%
    dplyr::select(-SHAPE_Area)
    
- 
  
 ```
 
@@ -631,7 +678,7 @@ summary(houses)
  
  #cor test
  
- cor.test(houses$parkArea, houses$SalePrice, method = "pearson")
+ cor.test(houses$metroRNN1, houses$SalePrice, method = "pearson")
  
  #trying to plot distWater to see if it's right... not working yet
 ggplot() +
