@@ -184,7 +184,7 @@ ymax = st_bbox(miamiBoundOSM)[[4]]
    osmdata_xml(filename = 'foodBev.osm')
  
  foodBev <- sf::st_read('foodBev.osm', layer = 'points') %>%
-     st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+     st_as_sf(coords = c("LON", "LAT"), crs = EPSG:3857, agr = "constant") %>%
   st_transform('ESRI:102658')
  
  foodBev <- rbind(
@@ -200,21 +200,19 @@ ymax = st_bbox(miamiBoundOSM)[[4]]
       mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES") %>%
    dplyr::select(name)
- 
 
-
-   
  
- #Coastline (doesn't work yet)
+ #shore
 shore <-opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
   add_osm_feature("natural", "coastline") %>%
-  osmdata_sf()
- shore <-
-  shore$osm_lines %>%
-  .[miamiBound,]
+   osmdata_xml(filename = 'shore.osm')
+
+ shore <- sf::st_read('shore.osm', layer = 'lines') %>%
+     st_as_sf(coords = c("LON", "LAT"), crs = EPSG:3857, agr = "constant") %>%
+  st_transform('ESRI:102658')
 
 
-
+#green space
 green <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/green.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
@@ -494,13 +492,19 @@ shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/
    mutate(TOD = ifelse(is.na(TOD), 0, 1)) %>%
    pull(TOD)
  
- #beaches/water
+ #Shoreline attempt 1 (might be wrong)
  houseCentroid <- st_centroid(houses)
  houses <- houseCentroid %>%
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
  
-#attempt 2 at shoreline distance (doesn't work yet)
+ #Shoreline attempt 2 (openstreetmap): not working but this seems to be the most promising. I'm not able to attach it to houses yet and the projection is off even though crs(shore) tells me it has the same projection as houses.
+ houses <-
+  houses %>%  
+  mutate(shoreDist=(geosphere::dist2Line(p=st_coordinates(st_centroid(houses)),
+                                        line=st_coordinates(shore))))
+ 
+#Shoreline attempt 3 (doesn't work, confusing method - )
 waterGrid <- st_make_grid(water,cellsize = 5000, what = "centers")
 mapview(waterGrid)
 water <- st_cast(water,"MULTILINESTRING")
@@ -511,9 +515,13 @@ df <- data.frame(shoreDist=as.vector(shoreDist)/1000,
                     st_coordinates(waterGrid))
 str(df)
 
-#colors 
 col_dist <- brewer.pal(11,"RdGy")
 
+
+ggplot() +
+  geom_sf(data = miamiBound, colour = "white") +
+  geom_sf(data = shore, colour = "red") +
+  mapTheme()
 
 ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
          geom_tile()+ #geometry
@@ -521,8 +529,6 @@ ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
              labs(fill="Distance (feet)")+ #legend name
              theme_void()+ #map theme
               theme(legend.position = "bottom") #legend position
-
-
 
  
  #nearest neighbors
