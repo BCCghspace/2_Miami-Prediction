@@ -110,6 +110,13 @@ nn_function <- function(measureFrom,measureTo,k) {
 #Study area base
 miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
   filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
+  st_union() %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+
+#base for osm (not projected so that it works)
+miamiBoundOSM <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
+  filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
   st_union()
 
 
@@ -165,21 +172,38 @@ acs <-
   dplyr::select(-totalUnits,-vacantUnits,-totalUnits,-population,-white, -ownerOcc, -renterOcc, -totalOcc)
   
 
-#OSM bounding box
-xmin = st_bbox(miamiBound)[[1]]
-ymin = st_bbox(miamiBound)[[2]]
-xmax = st_bbox(miamiBound)[[3]]  
-ymax = st_bbox(miamiBound)[[4]]
-
-
+#OSM bounding box (used the OSM - specific, non-projected, base)
+xmin = st_bbox(miamiBoundOSM)[[1]]
+ymin = st_bbox(miamiBoundOSM)[[2]]
+xmax = st_bbox(miamiBoundOSM)[[3]]  
+ymax = st_bbox(miamiBoundOSM)[[4]]
 
 #bars, restaurants, shopping
  foodBev <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
   add_osm_feature(key = 'amenity', value = c("bar","pub","restaurant","cafe")) %>%
-  osmdata_sf()
- foodBev <-
-  foodBev$osm_points %>%
-  .[miamiBound,]
+   osmdata_xml(filename = 'foodBev.osm')
+ 
+ foodBev <- sf::st_read('foodBev.osm', layer = 'points') %>%
+     st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+ 
+ foodBev <- rbind(
+    st_centroid(foodBev)[miamiBound,] %>%
+      st_drop_geometry() %>%
+      left_join(foodBev) %>%
+      st_sf() %>%
+      mutate(inMiami = "YES"),
+    foodBev[miamiBound, op = st_disjoint] %>%
+      st_drop_geometry() %>%
+      left_join(foodBev) %>%
+      st_sf() %>%
+      mutate(inMiami = "NO")) %>%
+  filter(inMiami == "YES") %>%
+   dplyr::select(name)
+ 
+
+
+   
  
  #Coastline (doesn't work yet)
 shore <-opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
@@ -520,8 +544,8 @@ ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
      busNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
      #culture
      cultureNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
-     #shops
-     shopNN5 = nn_function(st_c(st_centroid(houses)), st_c(shop), 5))
+     #food/drinks
+     foodBevNN4 = nn_function(st_c(st_centroid(houses)), st_c(foodBev), 4))
 
 
  #green buffer  - using ___ buffer distance because the mean NN1 = 14
@@ -594,13 +618,13 @@ summary(houses)
 #land? bldg?total?
  
  #cor test
- cor.test(houses$shopNN5, houses$SalePrice, method = "pearson")
+ cor.test(houses$foodBevNN4, houses$SalePrice, method = "pearson")
  
+ #trying to plot distWater to see if it's right... not working yet
 ggplot() +
   geom_sf(data = miamiBound) +
-  geom_sf(data = flood, aes(fill = FloodZone)) +
-  geom_sf(data = train, aes(colour = q5(SalePrice))) +
-  scale_fill_manual(values = palette5) +
+  geom_sf(data = houses, aes(fill = q5(distWater))) +
+#  scale_fill_manual(values = palette5) +
   mapTheme()
 
 ggplot() +
