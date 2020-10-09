@@ -22,7 +22,11 @@ library(mapview)
 library(osmdata)
 library(tidycensus)
 library(tidygeocoder)
-library
+library(raster)
+library(rnaturalearth)
+library(RColorBrewer)
+library(rnaturalearthdata)
+library(geosphere)
 
 mapTheme <- function(base_size = 12) {
   theme(
@@ -105,8 +109,6 @@ nn_function <- function(measureFrom,measureTo,k) {
 
 #Study area base
 miamiBound <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Boundary.geojson") %>%
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
-  st_transform('ESRI:102658') %>%
   filter(NAME == "MIAMI BEACH" | NAME == "MIAMI") %>%
   st_union()
 
@@ -169,13 +171,25 @@ ymin = st_bbox(miamiBound)[[2]]
 xmax = st_bbox(miamiBound)[[3]]  
 ymax = st_bbox(miamiBound)[[4]]
 
+
+
 #bars, restaurants, shopping
-# foodBev <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
-#  add_osm_feature(key = 'amenity', value = c("bar","pub","restaurant","cafe")) %>%
-#  osmdata_sf()
-# foodBev <-
-#  foodBev$osm_points %>%
-#  .[miamiBound,]
+ foodBev <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+  add_osm_feature(key = 'amenity', value = c("bar","pub","restaurant","cafe")) %>%
+  osmdata_sf()
+ foodBev <-
+  foodBev$osm_points %>%
+  .[miamiBound,]
+ 
+ #Coastline (doesn't work yet)
+shore <-opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+  add_osm_feature("natural", "coastline") %>%
+  osmdata_sf()
+ shore <-
+  shore$osm_lines %>%
+  .[miamiBound,]
+
+
 
 green <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/green.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -350,15 +364,6 @@ commercial <- rbind(
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
 
-commercial.sf <-
-  commercial %>%
-  filter(LAT > -1) %>%
-  dplyr::select(LAT, LON) %>%
-  na.omit() %>%
-  st_as_sf(coords = c("LAT", "LON"), crs = 4326, agr = "constant") %>%
-  st_transform('ESRI:102658') %>%
-  distinct()
-
 #flood zone
 flood <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/FEMA\ FLOOD\ ZONE") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -397,14 +402,30 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
     st_sf() %>%
     mutate(inMiami = "NO")) %>%
   filter(inMiami == "YES")
+ 
+  #####added variables
+# landuse <- st_read("https://opendata.arcgis.com/datasets/8c6e2575c8ad46eb887e6bb35825e1a6_0.geojson") 
+ #AD: this is for Philadelphia
+
+utility_water <- st_read("https://opendata.arcgis.com/datasets/d22634dc2f4745de8a9d8fb72e2bce3a_0.geojson") 
+ 
+utility_sewer <- st_read("https://opendata.arcgis.com/datasets/e4ac368322ee43c798ff194265e2a488_0.geojson")
+
+employee_pay <- st_read("https://opendata.arcgis.com/datasets/4b372d5fa4884947a20d03464b292219_0.geojson")
+
+low_income_depressed <- st_read("https://opendata.arcgis.com/datasets/40119bfc50274c1da548ec8022e9a7a9_0.geojson")
+
+neighborhood_revitalization <- st_read("https://opendata.arcgis.com/datasets/fe6f419e21264158b18eb77be9870d97_0.geojson")
+
+#shop <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/shop_point.geojson")
+shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/shop_point.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+
 ```
 
 
 ```{r wrangle, echo=FALSE}
- 
- #split house set
- train <- filter(houses, SalePrice != 0)
- predict <- filter(houses, SalePrice == 0) 
  
  #TOD
  metroRBuffer <- metrorail %>% 
@@ -412,14 +433,6 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
    st_union() %>% 
    st_as_sf() %>% 
    mutate(TOD = 1)
- 
- ggplot() +
-   geom_sf(data=st_union(tracts)) +
-   geom_sf(data=metroRBuffer) +
-   geom_sf(data=metrorail, show.legend = "point") +
-   facet_wrap(~Legend) +  #wrap by years and make small multiple plots
-   labs(caption = "Figure 1.2") +
-   mapTheme()
  
 # metroMBuffer <- 
 #   rbind(
@@ -451,41 +464,64 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
  #       st_sf() %>%
  #       mutate(TOD = 0))
  # 
- train$TOD <- train %>% 
+ houses$TOD <- houses %>% 
    st_centroid() %>% 
    st_join(metroRBuffer) %>% 
    mutate(TOD = ifelse(is.na(TOD), 0, 1)) %>%
    pull(TOD)
  
- 
  #beaches/water
- houseCentroid <- st_centroid(train)
- train <- houseCentroid %>%
+ houseCentroid <- st_centroid(houses)
+ houses <- houseCentroid %>%
    mutate(distWater = st_distance(., water)) %>%
      mutate(distWater = units::drop_units((distWater))) 
  
+#attempt 2 at shoreline distance (doesn't work yet)
+waterGrid <- st_make_grid(water,cellsize = 5000, what = "centers")
+mapview(waterGrid)
+water <- st_cast(water,"MULTILINESTRING")
+shoreDist <- st_distance(water,waterGrid)
+head(shoreDist)
+
+df <- data.frame(shoreDist=as.vector(shoreDist)/1000,
+                    st_coordinates(waterGrid))
+str(df)
+
+#colors 
+col_dist <- brewer.pal(11,"RdGy")
+
+
+ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
+         geom_tile()+ #geometry
+           scale_fill_gradientn(colours=rev(col_dist))+ #colors for plotting the distance
+             labs(fill="Distance (feet)")+ #legend name
+             theme_void()+ #map theme
+              theme(legend.position = "bottom") #legend position
+
+
+
  
  #nearest neighbors
  st_c <- st_coordinates
- train <-
-   train %>% 
+ houses <-
+   houses %>% 
    mutate(
      #contaminated
-     contaminatedNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2),
+     contaminatedNN2 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2),
      #commercial properties NN
-     commNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(commercial.sf)), 2), 
+     commNN2 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2), 
      #green space
-     greenNN1 = nn_function(st_c(st_centroid(train)), st_c(green), 1),
+     greenNN1 = nn_function(st_c(st_centroid(houses)), st_c(green), 1),
      #metro mover stations
-     metroMNN5 = nn_function(st_c(st_centroid(train)), st_c(metromover), 5),
+     metroMNN5 = nn_function(st_c(st_centroid(houses)), st_c(metromover), 5),
      #metro rail stations
-     metroRNN1 = nn_function(st_c(st_centroid(train)), st_c(metrorail), 1),
+     metroRNN1 = nn_function(st_c(st_centroid(houses)), st_c(metrorail), 1),
      #bus stations
-     busNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5),
+     busNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
      #culture
-     cultureNN5 = nn_function(st_c(st_centroid(train)), st_c(bus), 5), 
-     #mall
-     mallNN2 = nn_function(st_c(st_centroid(train)), st_c(st_centroid(malls)), 2))
+     cultureNN5 = nn_function(st_c(st_centroid(houses)), st_c(bus), 5),
+     #shops
+     shopNN5 = nn_function(st_c(st_centroid(houses)), st_c(shop), 5))
 
 
  #green buffer  - using ___ buffer distance because the mean NN1 = 14
@@ -493,44 +529,44 @@ contaminated <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Ra
   # st_centroid(green) %>%    #get centroids of green layer
   dplyr::select(counter)    
  
- train$green.Buffer =
-   st_buffer(train, 1487) %>%
+ houses$green.Buffer =
+   st_buffer(houses, 1487) %>%
    aggregate(greenCentroids, ., sum) %>% 
    st_drop_geometry() %>% 
    pull(counter)
 
- train <- train %>%
+ houses <- houses %>%
    mutate(green.Buffer = replace_na(green.Buffer, 0))  #replace NA values in counter to 0
           # greenArea = as.numeric(st_area(green)))  #make new area var., calculate area
-   
+
   
-summary(train)
+summary(houses)
 
 #add catchment info
- train <-
-   st_intersection(elementary, train) %>%
+ houses <-
+   st_intersection(elementary, houses) %>%
    rename(elemCatch = NAME) %>%
-   st_intersection(middle, train) %>%
+   st_intersection(middle, houses) %>%
    rename(middleCatch = NAME) %>%
-   st_intersection(high, train) %>%
+   st_intersection(high, houses) %>%
    rename(highCatch = NAME)
  
  
  #add school districts
- train <-
-   st_intersection(schoolDist, train) %>%
+ houses <-
+   st_intersection(schoolDist, houses) %>%
    rename(schoolDist = ID)
  
  
  #add census
- train <- 
-   st_intersection(acs, train) %>%
+ houses <- 
+   st_intersection(acs, houses) %>%
    rename(censusTract = NAME)
  
  
  #add flood
- train <-
-   st_intersection(flood, train) %>%
+ houses <-
+   st_intersection(flood, houses) %>%
    dplyr::select(-SHAPE_Area)
    
  
@@ -539,8 +575,26 @@ summary(train)
 
 
 ```{r correlation}
+ #split house set
+ train <- filter(houses, SalePrice != 0)
+ predict <- filter(houses, SalePrice == 0) 
+ 
+ #####housing correlation
+#1*bedrooms
+
+#2bathrooms  
+
+#3year built
+
+#4sq ft
+
+#5lot size
+
+#6senior vs long term senior
+#land? bldg?total?
+ 
  #cor test
- cor.test(train$distWater, train$SalePrice, method = "pearson")
+ cor.test(houses$shopNN5, houses$SalePrice, method = "pearson")
  
 ggplot() +
   geom_sf(data = miamiBound) +
@@ -581,7 +635,7 @@ ggplot() +
 ```{r testing figures}
 ####MAP: DEPENDENT VAR. (sale price)####
 ggplot() +
-  geom_sf(data = tracts, colour = "white", fill = "gray") +
+  geom_sf(data = acs, colour = "white", fill = "gray") +
   geom_sf(data = train, aes(colour = q5(SalePrice)), 
           show.legend = "point", size = 0.7) +
   scale_colour_manual(values = palette5,
