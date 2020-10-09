@@ -240,6 +240,19 @@ green <- rbind(
   filter(inMiami == "YES") %>%
   mutate(counter = 1)
 
+#parks
+muniParks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/Municipal_Park_Boundary.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658') %>%
+  dplyr::select(NAME, ADDRESS, CITY, CLASS, Shape__Area)
+countyParks <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/County_Park_Boundary.geojson") %>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658') %>%
+    dplyr::select(NAME, ADDRESS, CITY, CLASS, Shape__Area)
+parks <- bind_rows(muniParks, countyParks) %>% 
+  filter(CITY == "Miami" | CITY == "Miami Beach") %>%
+  mutate(counter = 1)
+
 #school dist
 schoolDist <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/School_Board_District.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
@@ -501,48 +514,7 @@ shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/
    st_join(metroRBuffer) %>% 
    mutate(TOD = ifelse(is.na(TOD), 0, 1)) %>%
    pull(TOD)
- 
- 
- 
- #Shoreline attempt 1 (seems wrong + can't plot it)
- houseCentroid <- st_centroid(houses)
- houses <- houseCentroid %>%
-   mutate(distWater = st_distance(., water)) %>%
-     mutate(distWater = units::drop_units((distWater))) 
- 
-#Shoreline attempt 2 (openstreetmap): not working but this seems to be the most promising. I'm not able to attach it to houses yet and the projection is off even though crs(shore) tells me it has the same projection as houses.
- houses <-
-  houses %>%  
-  mutate(shoreDist=(geosphere::dist2Line(p=st_coordinates(st_centroid(houses)),
-                                        line=st_coordinates(shore))))
- 
-#Shoreline attempt 3 (doesn't work, confusing method - )
-waterGrid <- st_make_grid(water,cellsize = 5000, what = "centers")
-mapview(waterGrid)
-water <- st_cast(water,"MULTILINESTRING")
-shoreDist <- st_distance(water,waterGrid)
-head(shoreDist)
 
-df <- data.frame(shoreDist=as.vector(shoreDist)/1000,
-                    st_coordinates(waterGrid))
-str(df)
-
-col_dist <- brewer.pal(11,"RdGy")
-
-
-ggplot() +
-  geom_sf(data = miamiBound, colour = "white") +
-  geom_sf(data = shore, colour = "red") +
-  mapTheme()
-
-ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
-         geom_tile()+ #geometry
-           scale_fill_gradientn(colours=rev(col_dist))+ #colors for plotting the distance
-             labs(fill="Distance (feet)")+ #legend name
-             theme_void()+ #map theme
-              theme(legend.position = "bottom") #legend position
-
- 
  #nearest neighbors
  st_c <- st_coordinates
  houses <-
@@ -554,6 +526,8 @@ ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
      commNN2 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(commercial.sf)), 2), 
      #green space
      greenNN1 = nn_function(st_c(st_centroid(houses)), st_c(green), 1),
+     #parks
+     parkNN1 = nn_function(st_c(st_centroid(houses)), st_c(st_centroid(parks)), 1),
      #metro mover stations
      metroMNN5 = nn_function(st_c(st_centroid(houses)), st_c(metromover), 5),
      #metro rail stations
@@ -566,16 +540,36 @@ ggplot(df,aes(X,Y,fill=shoreDist))+ #variables
      foodBevNN4 = nn_function(st_c(st_centroid(houses)), st_c(foodBev), 4))
 
 
- #green buffer  - using ___ buffer distance because the mean NN1 = 14
- greenCentroids <- green %>% 
-  # st_centroid(green) %>%    #get centroids of green layer
-  dplyr::select(counter)    
+ #green buffer  - using 1600ft buffer distance because the mean NN1 = 1600
+ parkCentroids <- parks %>% 
+   st_centroid(parks) %>%    #get centroids of park layer
+  dplyr::select(counter)
  
- houses$green.Buffer =
-   st_buffer(houses, 1487) %>%
-   aggregate(greenCentroids, ., sum) %>% 
+houses$parkCount <-
+   st_buffer(houses, 1600) %>%
+   aggregate(parkCentroids, ., sum) %>% 
    st_drop_geometry() %>% 
    pull(counter)
+ 
+parkBuffer <- st_buffer(houses, 1600) %>%
+  dplyr::select(Property.Address) %>%
+  st_as_sf() 
+
+bufferedParks <- st_intersection(parkBuffer, parks) %>%
+  group_by(Property.Address) %>%
+  summarise() %>%
+  mutate(parkArea = units::drop_units(st_area(.))) %>%
+  st_drop_geometry()
+
+houses <-
+  left_join(houses, bufferedParks)
+
+ggplot() + 
+  geom_sf(data = houses, aes(colour = q5(parkArea))) +
+  scale_fill_manual(values = palette5) +
+  mapTheme()
+
+
 
  houses <- houses %>%
    mutate(green.Buffer = replace_na(green.Buffer, 0))  #replace NA values in counter to 0
@@ -636,9 +630,8 @@ summary(houses)
 #land? bldg?total?
  
  #cor test
- houses[[distWater]] <- houses$distWater
  
- cor.test(houses$distWater, houses$SalePrice, method = "pearson")
+ cor.test(houses$parkArea, houses$SalePrice, method = "pearson")
  
  #trying to plot distWater to see if it's right... not working yet
 ggplot() +
