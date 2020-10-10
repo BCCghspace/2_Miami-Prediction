@@ -470,10 +470,17 @@ low_income_depressed <- st_read("https://opendata.arcgis.com/datasets/40119bfc50
 
 neighborhood_revitalization <- st_read("https://opendata.arcgis.com/datasets/fe6f419e21264158b18eb77be9870d97_0.geojson")
 
-#shop <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/shop_point.geojson")
+#1shop <- st_read("E:/Upenn/CPLN508/miami/2_Miami-Prediction/Raw Data/shop_point.geojson")
 shop <- st_read("/Users/annaduan/Documents/GitHub/2_Miami\ Prediction/Raw\ Data/shop_point.geojson") %>%
   st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102658')
+#2#inner
+#3the best for supermarket
+#3fixed effect
+#4neighbordata miamibeach 
+#5do regreesion for my variables
+#6contaminated
+#https://www.neighborhoodscout.com/create?preset-city=Miami%20Beach&preset-state=FL#
 
 ```
 
@@ -686,6 +693,15 @@ houses <-
                   Bed >= 3 & Bed < 4  ~ "3 Beds",
                   Bed > 4                    ~ "4+ Beds"))
  
+ #BC should we do one for stories too? we have only 4 floors at max
+ houses <- 
+  houses %>%
+  mutate(NUM_FLOORS.cat = case_when(
+                  Stories >= 0 & Bed < 3  ~ "Up to 2 Beds",
+                  Bed >= 3 & Bed < 4  ~ "3 Beds",
+                  Bed > 4))
+ 
+ 
 ```
 
 
@@ -732,6 +748,182 @@ houses <-
  
  
 ```
+
+```{r neighborhood fixed effect}
+############data wrangling###############
+library(knitr)
+library(kableExtra)
+library(scales)
+
+root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+#https://www.city-data.com/nbmaps/neigh-Miami-Beach-Florida.html
+#try osm to read in hh data
+# nhoods <- opq(bbox = c(xmin, ymin, xmax, ymax)) %>% 
+#  add_osm_feature(key = 'place', value = c("neighborhood")) %>%
+#   osmdata_xml(filename = 'nhoods.osm')
+ #project
+# nhoods <- sf::st_read('nhoods.osm') %>% #not working here
+#     st_as_sf(coords = c("LON", "LAT"), crs = EPSG:3857, agr = "constant") %>%
+#  st_transform('ESRI:102658')
+ #filter
+ #nhoods <- rbind(
+#    st_centroid(nhoods)[miamiBound,] %>%
+#      st_drop_geometry() %>%
+#      left_join(nhoods) %>%
+ #     st_sf() %>%
+#      mutate(inMiami = "YES"),
+#    nhoods[miamiBound, op = st_disjoint] %>%
+#      st_drop_geometry() %>%
+#      left_join(nhoods) %>%
+#      st_sf() %>%
+#      mutate(inMiami = "NO")) %>%
+#  filter(inMiami == "YES") %>%
+ #  dplyr::select(name)
+
+
+
+#neighborhoods for miami beach
+nhoods_fl <- aoi_boundary_HARV <- st_read("E:/Upenn/CPLN508/miami/zillow_nghbrhd_feb17/zillow_nghbrhd_feb17.shp")
+nhoods_mb <- subset(nhoods_fl, CITY == "MIAMI BEACH")%>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+nhoods_m <- subset(nhoods_fl, CITY == "MIAMI")%>%
+  st_as_sf(coords = c("LON", "LAT"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102658')
+
+nhoods <- rbind(nhoods_mb, nhoods_m)
+  
+inTrain <- createDataPartition(
+              y = paste(miamiBound$v1, miamiBound$v2, 
+                        miamiBound$v3, miamiBound$v4), #our four housing variables
+              p = .60, list = FALSE)
+miami.training <- miamiBound[inTrain,] 
+miami.test <- miamiBound[-inTrain,]  
+ 
+reg.training <- 
+  lm(SalePrice ~ ., data = as.data.frame(miami.training) %>% 
+                             dplyr::select(SalePrice, Lotsize, AdjustedSqFt, 
+                                           GROSS_AREA, Stories,
+                                           Bed.cat)) #not sure what to put in for now
+
+miami.test <-
+  miami.test %>%
+  mutate(Regression = "Baseline Regression",
+         SalePrice.Predict = predict(reg.training, miami.test),
+         SalePrice.Error = SalePrice.Predict - SalePrice,
+         SalePrice.AbsError = abs(SalePrice.Predict - SalePrice),
+         SalePrice.APE = (abs(SalePrice.Predict - SalePrice)) / SalePrice.Predict)%>%
+  filter(SalePrice < 5000000) 
+
+
+############test for clustering##############
+coords <- st_coordinates(miamiBound) 
+
+neighborList <- knn2nb(knearneigh(coords, 5)) #5 nearest neighborhoods, we can change that 
+
+spatialWeights <- nb2listw(neighborList, style="W") #not sure what is W here
+
+miamiBound$lagPrice <- lag.listw(spatialWeights, miamiBound$SalePrice)
+
+coords.test <-  st_coordinates(miamiBound.test) 
+
+neighborList.test <- knn2nb(knearneigh(coords.test, 5))
+
+spatialWeights.test <- nb2listw(neighborList.test, style="W")
+ 
+miami.test %>% 
+  mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)) %>%
+  ggplot(aes(lagPriceError, SalePrice.Error)) ...
+
+################Moran I##################
+moranTest <- moran.mc(miami.test$SalePrice.Error, 
+                      spatialWeights.test, nsim = 999)
+
+ggplot(as.data.frame(moranTest$res[c(1:999)]), aes(moranTest$res[c(1:999)])) +
+  geom_histogram(binwidth = 0.01) +
+  geom_vline(aes(xintercept = moranTest$statistic), colour = "#FA7800",size=1) +
+  scale_x_continuous(limits = c(-1, 1)) +
+  labs(title="Observed and permuted Moran's I",
+       subtitle= "Observed Moran's I in orange",
+       x="Moran's I",
+       y="Count",
+       caption="Public Policy Analytics, Figure x.x") +
+  plotTheme()
+
+
+
+reg.nhood <- lm(SalePrice ~ ., data = as.data.frame(miami.training) %>% 
+                                 dplyr::select(Name, SalePrice, Lotsize, AdjustedSqFt, 
+                                           GROSS_AREA, Stories,
+                                           Bed.cat)) #not sure what to put in for now
+
+miami.test.nhood <-
+  miami.test %>%
+  mutate(Regression = "Neighborhood Effects",
+         SalePrice.Predict = predict(reg.nhood, miami.test),
+         SalePrice.Error = SalePrice - SalePrice.Predict,
+         SalePrice.AbsError = abs(SalePrice - SalePrice.Predict),
+         SalePrice.APE = (abs(SalePrice - SalePrice.Predict)) / SalePrice)%>%
+  filter(SalePrice < 5000000)
+
+
+#############examine the accuracy of heighborhood model########
+bothRegressions <- 
+  rbind(
+    dplyr::select(miami.test, starts_with("SalePrice"), Regression, Name) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)),
+    dplyr::select(miami.test.nhood, starts_with("SalePrice"), Regression, Name) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, SalePrice.Error)))   
+
+
+st_drop_geometry(bothRegressions) %>%
+  gather(Variable, Value, -Regression, -Name) %>%
+  filter(Variable == "SalePrice.AbsError" | Variable == "SalePrice.APE") %>%
+  group_by(Regression, Variable) %>%
+    summarize(meanValue = mean(Value, na.rm = T)) %>%
+    spread(Variable, meanValue) %>%
+    kable()
+
+
+
+bothRegressions %>%
+  dplyr::select(SalePrice.Predict, SalePrice, Regression) %>%
+    ggplot(aes(SalePrice, SalePrice.Predict)) +
+  geom_point() +
+  stat_smooth(aes(SalePrice, SalePrice), 
+             method = "lm", se = FALSE, size = 1, colour="#FA7800") + 
+  stat_smooth(aes(SalePrice.Predict, SalePrice), 
+              method = "lm", se = FALSE, size = 1, colour="#25CB10") +
+  facet_wrap(~Regression) +
+  labs(title="Predicted sale price as a function of observed price",
+       subtitle="Orange line represents a perfect prediction; Green line represents prediction") +
+  plotTheme() + theme(plot.title = element_text(size = 18, colour = "black")) 
+
+
+##########map the hh effects#########
+st_drop_geometry(bothRegressions) %>%
+  group_by(Regression, Name) %>%
+  summarize(mean.MAPE = mean(SalePrice.APE, na.rm = T)) %>%
+  ungroup() %>% 
+  left_join(nhoods) %>%
+    st_sf() %>%
+    ggplot() + 
+      geom_sf(aes(fill = mean.MAPE)) +
+      geom_sf(data = bothRegressions, colour = "black", size = .5) +
+      facet_wrap(~Regression) +
+      scale_fill_gradient(low = palette5[1], high = palette5[5],
+                          name = "MAPE") +
+      labs(title = "Mean test set MAPE by neighborhood") +
+      mapTheme()
+
+
+########test the effects of indirect variables maybe?########
+
+```
+
+
 
 ```{r testing figures}
 ####MAP: DEPENDENT VAR. (sale price)####
