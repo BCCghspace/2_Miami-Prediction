@@ -198,7 +198,7 @@ ymax = st_bbox(miamiBoundOSM)[[4]]
  foodBev <- sf::st_read('foodBev.osm', layer = 'points') %>%
      st_as_sf(coords = c("LON", "LAT"), crs = EPSG:3857, agr = "constant") %>%
   st_transform('ESRI:102658')
- #filter
+ #filter for facilities in study area
  foodBev <- rbind(
     st_centroid(foodBev)[miamiBound,] %>%
       st_drop_geometry() %>%
